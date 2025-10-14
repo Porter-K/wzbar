@@ -1,8 +1,23 @@
 const std = @import("std");
+const Scanner = @import("wayland").Scanner;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const scanner = Scanner.create(b, .{});
+    const wayland = b.createModule(.{ .root_source_file = scanner.result });
+    
+
+    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.addCustomProtocol(b.path("protocol/wlr_layer_shell_v1.xml"));
+
+    scanner.generate("wl_seat", 4);
+    // scanner.generate("xdg_wm_base", 3);
+    scanner.generate("wl_output", 4);
+    scanner.generate("wl_compositor", 1);
+    scanner.generate("wl_shm", 1);
+    scanner.generate("zwlr_layer_shell_v1", 5);
+
     const exe = b.addExecutable(.{
         .name = "wzbar",
         .root_module = b.createModule(.{
@@ -13,6 +28,11 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+
+    exe.root_module.addImport("wayland", wayland);
+    exe.linkLibC();
+    exe.linkSystemLibrary("wayland-client");
+
     b.installArtifact(exe);
     const run_step = b.step("run", "Run the app");
     const run_cmd = b.addRunArtifact(exe);
