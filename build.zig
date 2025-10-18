@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("wayland", wayland);
     exe.linkLibC();
     exe.linkSystemLibrary("wayland-client");
+    exe.linkSystemLibrary("freetype2");
 
     b.installArtifact(exe);
     const run_step = b.step("run", "Run the app");

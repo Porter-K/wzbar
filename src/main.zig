@@ -4,6 +4,11 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const zwlr = wayland.client.zwlr;
 
+const c = @cImport({
+    @cInclude("freetype2/ft2build.h");
+    @cInclude("freetype2/freetype/freetype.h");
+});
+
 const Location = enum {
     top,
     bottom,
@@ -13,6 +18,9 @@ const Config = struct {
     height: u32,
     location: Location,
     background_colour: u32,
+    font_size: u32,
+    font_file: [*c]const u8,
+
 };
 
 const Context = struct {
@@ -32,6 +40,8 @@ pub fn main() anyerror!void {
         .height = 30,
         .location = Location.top,
         .background_colour = 0xFF000000,
+        .font_size = 16,
+        .font_file = "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
     };
     try createBar(config);
 }
@@ -144,3 +154,96 @@ fn drawBar(context: Context) !void {
     context.surface.?.attach(buffer, 0, 0);
     context.surface.?.commit();
 }
+
+fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32) !void {
+    var library: c.FT_Library = undefined;
+    var face: c.FT_Face = undefined;
+    var err: c.FT_Error = undefined;
+    const load_flags = 0;
+
+    var pen_x: u32 = x;
+    var pen_y: u32 = y;
+
+
+    err = c.FT_Init_FreeType(&library);
+    if (err != 0) {
+        return error.FailedToInitFreeType;
+    }
+
+    err = c.FT_New_Face(library, context.config.font_file, 0, &face);
+    if (err == c.FT_Err_Unknown_File_Format) {
+        return error.UnknownFontFileFormat;
+    } else if (err != 0) {
+        return error.FailedToCreateFace;
+    }
+
+    err = c.FT_Set_Pixel_Sizes(face, 0, context.config.font_size);
+    if (err != 0) {
+        return error.FailedToSetPixelSize;
+    }
+
+    for (text) |char| {
+        const glyph_index = c.FT_Get_Char_Index(face, char);
+        const render_mode: c.FT_Render_Mode = c.FT_RENDER_MODE_MONO;
+
+        err = c.FT_Load_Glyph(face, glyph_index, load_flags);
+        if (err != 0) {
+            return error.FailedToLoadGlyph;
+        }
+
+        err = c.FT_Render_Glyph(face.*.glyph, render_mode);
+        if (err != 0) {
+            return error.FailedToRenderGlyph;
+        }
+
+        const slot: c.FT_GlyphSlot = face.*.glyph;
+        var bitmap_top: i32 = @as(i32, @intCast(pen_y)) - @as(i32, @intCast(slot.*.metrics.horiBearingY >> 6));
+        bitmap_top += 20;
+        try draw_character(context, data, &slot.*.bitmap, pen_x, @intCast(bitmap_top));
+
+        pen_x += @intCast(slot.*.advance.x >> 6);
+        pen_y += @intCast(slot.*.advance.y >> 6);
+    }
+
+}
+
+fn draw_character(context: Context, data: []u32, bitmap: *c.FT_Bitmap, pen_x: u32, pen_y: u32) !void {
+    const x_max: u32 = pen_x + bitmap.*.width;
+    const y_max: u32 = pen_y + bitmap.*.rows;
+    var i: u32 = pen_x;
+    var p: u32 = 0;
+    while (i < x_max) : ({
+        i += 1;
+        p += 1;
+    }) {
+        if (i < 0 or i >= context.width) {
+            continue;
+        }
+        var j: u32 = pen_y;
+        var q: u32 = 0;
+        while (j < y_max) : ({
+            j += 1;
+            q += 1;
+        }) {
+            if (j < 0 or j >= context.height) {
+                continue;
+            }
+
+            if (monoPixelIsSet(bitmap, p, q)) {
+                data[i + j * context.width] = 0xFFFFFFFF;
+            }
+        }
+    }
+}
+
+/// returns true if the pixel at (x, y) is set in a mono bitmap
+fn monoPixelIsSet(bitmap: *c.FT_Bitmap, x: usize, y: usize) bool {
+    const y_cast: isize = @intCast(y);
+    const row_start: isize = y_cast * bitmap.pitch; // signed because pitch can be <0
+    const x_cast: isize = @intCast(x);
+    const byte_offset = row_start + @divFloor(x_cast, 8);
+    const bit_mask = @as(u8, 0x80) >> @as(u3, @intCast(x % 8));
+    const byte = bitmap.buffer[@intCast(byte_offset)];
+    return (byte & bit_mask) != 0;
+}
+
