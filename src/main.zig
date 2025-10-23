@@ -20,7 +20,7 @@ const Config = struct {
     background_colour: u32,
     font_size: u32,
     font_file: [*c]const u8,
-
+    modules: []const Module,
 };
 
 const Context = struct {
@@ -35,15 +35,43 @@ const Context = struct {
     config: Config,
 };
 
-pub fn main() anyerror!void {
+const ModuleType = enum {
+    BlankModule,
+};
+
+const Module = struct {
+    background_colour: u32,
+    text_color: u32,
+    module_type: ModuleType,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    draw_module: *const fn (module: Module, context: Context, []u32) anyerror!void,
+};
+
+pub fn main() !void {
+    const modules: []const Module = &.{};
     const config = Config{
         .height = 30,
         .location = Location.top,
         .background_colour = 0xFF000000,
         .font_size = 16,
         .font_file = "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
+        .modules = modules,
     };
     try createBar(config);
+}
+
+fn draw_blank_module(module: Module, context: Context, data: []u32) anyerror!void {
+    var j: u32 = module.y;
+    while (j<module.y+module.height): (j+=1) {
+        std.debug.print("j: {}\n", .{j});
+        var i: u32 = module.x;
+        while (i<module.x+module.width): (i+=1) {
+            data[j*context.width+i] = module.background_colour;
+        }
+    }
 }
 
 fn createBar(config: Config) !void {
@@ -152,6 +180,9 @@ fn drawBar(context: Context) !void {
     defer buffer.destroy();
 
     context.surface.?.attach(buffer, 0, 0);
+    for (context.config.modules) |module| {
+        try module.draw_module(module, context, data);
+    }
     context.surface.?.commit();
 }
 
