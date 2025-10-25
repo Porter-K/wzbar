@@ -4,24 +4,12 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const zwlr = wayland.client.zwlr;
 
+const cfg = @import("config");
+
 const c = @cImport({
     @cInclude("freetype2/ft2build.h");
     @cInclude("freetype2/freetype/freetype.h");
 });
-
-const Location = enum {
-    top,
-    bottom,
-};
-
-const Config = struct {
-    height: u32,
-    location: Location,
-    background_colour: u32,
-    font_size: u32,
-    font_file: [*c]const u8,
-    modules: []const Module,
-};
 
 const Context = struct {
     shm: ?*wl.Shm,
@@ -32,41 +20,20 @@ const Context = struct {
     running: bool,
     height: u32,
     width: u32,
-    config: Config,
-};
-
-const ModuleType = enum {
-    BlankModule,
-};
-
-const Module = struct {
-    background_colour: u32,
-    text_color: u32,
-    module_type: ModuleType,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    draw_module: *const fn (module: Module, context: Context, []u32) anyerror!void,
+    config: cfg.Config,
 };
 
 pub fn main() !void {
-    const modules: []const Module = &.{};
-    const config = Config{
-        .height = 30,
-        .location = Location.top,
-        .background_colour = 0xFF000000,
-        .font_size = 16,
-        .font_file = "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
-        .modules = modules,
-    };
+    const result = try cfg.parse_config();
+    defer result.deinit();
+    const config = result.value;
+
     try createBar(config);
 }
 
-fn draw_blank_module(module: Module, context: Context, data: []u32) anyerror!void {
+fn draw_blank_module(module: cfg.Module, context: Context, data: []u32) anyerror!void {
     var j: u32 = module.y;
     while (j<module.y+module.height): (j+=1) {
-        std.debug.print("j: {}\n", .{j});
         var i: u32 = module.x;
         while (i<module.x+module.width): (i+=1) {
             data[j*context.width+i] = module.background_colour;
@@ -74,7 +41,7 @@ fn draw_blank_module(module: Module, context: Context, data: []u32) anyerror!voi
     }
 }
 
-fn createBar(config: Config) !void {
+fn createBar(config: cfg.Config) !void {
     var context = Context{
         .shm = null,
         .compositor = null,
@@ -104,10 +71,10 @@ fn createBar(config: Config) !void {
     defer zwlr_surface.destroy();
     zwlr_surface.setSize(0, @intCast(config.height));
     zwlr_surface.setAnchor(.{
-        .top = config.location == Location.top,
+        .top = config.location == cfg.Location.top,
         .right = true,
         .left = true,
-        .bottom = config.location == Location.bottom,
+        .bottom = config.location == cfg.Location.bottom,
     });
     zwlr_surface.setExclusiveZone(@intCast(context.config.height));
 
@@ -181,7 +148,9 @@ fn drawBar(context: Context) !void {
 
     context.surface.?.attach(buffer, 0, 0);
     for (context.config.modules) |module| {
-        try module.draw_module(module, context, data);
+        switch (module.module_type) {
+            .BlankModule => try draw_blank_module(module, context, data)
+        }
     }
     context.surface.?.commit();
 }

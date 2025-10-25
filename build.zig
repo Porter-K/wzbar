@@ -18,6 +18,17 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_shm", 1);
     scanner.generate("zwlr_layer_shell_v1", 5);
 
+    const toml = b.dependency("toml", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const config = b.addModule("config", .{
+        .root_source_file = b.path("src/config.zig"),
+        .target = target,
+    });
+    config.addImport("toml", toml.module("toml"));
+
     const exe = b.addExecutable(.{
         .name = "wzbar",
         .root_module = b.createModule(.{
@@ -25,6 +36,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "config", .module = config },
             },
         }),
     });

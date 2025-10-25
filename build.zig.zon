@@ -36,6 +36,10 @@
             .url = "git+https://codeberg.org/ifreund/zig-wayland.git#6afd094563b0ff20f4d00a672f9bde79d19ab12e",
             .hash = "wayland-0.5.0-dev-lQa1kiPNAQA9JJ8QjlibS0EsuzgNq6KkF7hxAPug0wrh",
         },
+        .toml = .{
+            .url = "git+https://github.com/sam701/zig-toml?ref=zig-0.15#475b03c630c802f8b6bd3e239d8fc2279b4fadb8",
+            .hash = "toml-0.3.0-bV14BfV7AQD8DkuQI7skP8ekQTaBYKTO0MY_35Cw_EXo",
+        },
     },
     .paths = .{
         "build.zig",
