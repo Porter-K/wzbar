@@ -9,6 +9,8 @@ const cfg = @import("config");
 const c = @cImport({
     @cInclude("freetype2/ft2build.h");
     @cInclude("freetype2/freetype/freetype.h");
+    @cInclude("time.h");
+    @cInclude("unistd.h");
 });
 
 const Context = struct {
@@ -33,12 +35,34 @@ pub fn main() !void {
 
 fn draw_blank_module(module: cfg.Module, context: Context, data: []u32) anyerror!void {
     var j: u32 = module.y;
-    while (j<module.y+module.height): (j+=1) {
+    while (j < module.y + module.height) : (j += 1) {
         var i: u32 = module.x;
-        while (i<module.x+module.width): (i+=1) {
-            data[j*context.width+i] = module.background_colour;
+        while (i < module.x + module.width) : (i += 1) {
+            data[j * context.width + i] = module.background_colour;
         }
     }
+}
+
+fn draw_time_module(module: cfg.Module, context: Context, data: []u32) anyerror!void {
+    var j: u32 = module.y;
+    while (j < module.y + module.height) : (j += 1) {
+        var i: u32 = module.x;
+        while (i < module.x + module.width) : (i += 1) {
+            data[j * context.width + i] = module.background_colour;
+        }
+    }
+    const time = c.time(null);
+    const local_time = c.localtime(&time);
+    const c_time_str = c.asctime(local_time);
+    var len: u8 = 0;
+    while (c_time_str[len] != 0) {
+        len += 1;
+    }
+    const time_str: []const u8 = c_time_str[0..len-1];
+
+    try drawText(time_str, module.x, module.y, context, data);
+    context.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
+    context.surface.?.commit();
 }
 
 fn createBar(config: cfg.Config) !void {
@@ -85,6 +109,8 @@ fn createBar(config: cfg.Config) !void {
 
     while (context.running) {
         if (wl_display.dispatch() != .SUCCESS) return error.DispatchFailed;
+        try drawBar(context);
+        _ = c.sleep(1);
     }
 }
 
@@ -138,6 +164,7 @@ fn drawBar(context: Context) !void {
         fd,
         0,
     ));
+    defer std.posix.munmap(@ptrCast(@alignCast(data)));
     @memset(data, context.config.background_colour);
 
     const pool = try context.shm.?.createPool(fd, @intCast(size));
@@ -149,7 +176,8 @@ fn drawBar(context: Context) !void {
     context.surface.?.attach(buffer, 0, 0);
     for (context.config.modules) |module| {
         switch (module.module_type) {
-            .BlankModule => try draw_blank_module(module, context, data)
+            .BlankModule => try draw_blank_module(module, context, data),
+            .TimeModule => try draw_time_module(module, context, data),
         }
     }
     context.surface.?.commit();
@@ -164,13 +192,20 @@ fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32) !vo
     var pen_x: u32 = x;
     var pen_y: u32 = y;
 
-
     err = c.FT_Init_FreeType(&library);
+    defer _ = c.FT_Done_FreeType(library);
     if (err != 0) {
         return error.FailedToInitFreeType;
     }
 
-    err = c.FT_New_Face(library, context.config.font_file, 0, &face);
+    const allocator = std.heap.page_allocator;
+    const temp = try allocator.alloc(u8, context.config.font_file.len+1);
+    defer allocator.free(temp);
+    const c_text: [*c]u8 = @ptrCast(temp);
+    @memcpy(c_text[0..context.config.font_file.len], context.config.font_file);
+    c_text[context.config.font_file.len] = 0;
+    err = c.FT_New_Face(library, c_text, 0, &face);
+    defer _ = c.FT_Done_Face(face);
     if (err == c.FT_Err_Unknown_File_Format) {
         return error.UnknownFontFileFormat;
     } else if (err != 0) {
@@ -204,7 +239,6 @@ fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32) !vo
         pen_x += @intCast(slot.*.advance.x >> 6);
         pen_y += @intCast(slot.*.advance.y >> 6);
     }
-
 }
 
 fn draw_character(context: Context, data: []u32, bitmap: *c.FT_Bitmap, pen_x: u32, pen_y: u32) !void {
@@ -246,4 +280,3 @@ fn monoPixelIsSet(bitmap: *c.FT_Bitmap, x: usize, y: usize) bool {
     const byte = bitmap.buffer[@intCast(byte_offset)];
     return (byte & bit_mask) != 0;
 }
-

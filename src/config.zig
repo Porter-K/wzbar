@@ -3,6 +3,7 @@ const toml = @import("toml");
 
 pub const ModuleType = enum {
     BlankModule,
+    TimeModule,
 };
 
 pub const Module = struct {
