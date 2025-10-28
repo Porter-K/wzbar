@@ -13,7 +13,7 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
-const Context = struct {
+const Bar = struct {
     shm: ?*wl.Shm,
     compositor: ?*wl.Compositor,
     layer_shell: ?*zwlr.LayerShellV1,
@@ -35,7 +35,7 @@ pub fn main() !void {
 }
 
 fn createBar(config: cfg.Config, allocator: std.mem.Allocator) !void {
-    var context = Context{
+    var bar = Bar{
         .shm = null,
         .compositor = null,
         .layer_shell = null,
@@ -50,15 +50,15 @@ fn createBar(config: cfg.Config, allocator: std.mem.Allocator) !void {
     const wl_display = try wl.Display.connect(null);
     const wl_registry = try wl_display.getRegistry();
 
-    wl_registry.setListener(*Context, wlRegistryListener, &context);
+    wl_registry.setListener(*Bar, wlRegistryListener, &bar);
     if (wl_display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
-    const wl_compositor = context.compositor orelse return error.NoWlCompositor;
-    const layer_shell = context.layer_shell orelse return error.NoShell;
+    const wl_compositor = bar.compositor orelse return error.NoWlCompositor;
+    const layer_shell = bar.layer_shell orelse return error.NoShell;
 
     const wl_surface = try wl_compositor.createSurface();
     defer wl_surface.destroy();
-    context.surface = wl_surface;
+    bar.surface = wl_surface;
 
     const zwlr_surface = try layer_shell.getLayerSurface(wl_surface, null, zwlr.LayerShellV1.Layer.top, "wzbar");
     defer zwlr_surface.destroy();
@@ -69,58 +69,58 @@ fn createBar(config: cfg.Config, allocator: std.mem.Allocator) !void {
         .left = true,
         .bottom = config.location == cfg.Location.bottom,
     });
-    zwlr_surface.setExclusiveZone(@intCast(context.config.height));
+    zwlr_surface.setExclusiveZone(@intCast(bar.config.height));
 
-    zwlr_surface.setListener(*Context, zwlrSurfaceListener, &context);
+    zwlr_surface.setListener(*Bar, zwlrSurfaceListener, &bar);
 
     wl_surface.commit();
     if (wl_display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
-    while (context.running) {
+    while (bar.running) {
         if (wl_display.dispatch() != .SUCCESS) return error.DispatchFailed;
-        try drawBar(context, allocator);
+        try drawBar(bar, allocator);
         _ = c.sleep(1);
     }
 }
 
-fn wlRegistryListener(registry: *wl.Registry, event: wl.Registry.Event, context: *Context) void {
+fn wlRegistryListener(registry: *wl.Registry, event: wl.Registry.Event, bar: *Bar) void {
     switch (event) {
         .global => |global| {
             if (std.mem.orderZ(u8, global.interface, wl.Compositor.interface.name) == .eq) {
-                context.compositor = registry.bind(global.name, wl.Compositor, 1) catch return;
+                bar.compositor = registry.bind(global.name, wl.Compositor, 1) catch return;
             } else if (std.mem.orderZ(u8, global.interface, wl.Shm.interface.name) == .eq) {
-                context.shm = registry.bind(global.name, wl.Shm, 1) catch return;
+                bar.shm = registry.bind(global.name, wl.Shm, 1) catch return;
             } else if (std.mem.orderZ(u8, global.interface, zwlr.LayerSurfaceV1.interface.name) == .eq) {
-                context.layer_surface = registry.bind(global.name, zwlr.LayerSurfaceV1, 1) catch return;
+                bar.layer_surface = registry.bind(global.name, zwlr.LayerSurfaceV1, 1) catch return;
             } else if (std.mem.orderZ(u8, global.interface, zwlr.LayerShellV1.interface.name) == .eq) {
-                context.layer_shell = registry.bind(global.name, zwlr.LayerShellV1, 1) catch return;
+                bar.layer_shell = registry.bind(global.name, zwlr.LayerShellV1, 1) catch return;
             }
         },
         .global_remove => {},
     }
 }
 
-fn zwlrSurfaceListener(zwlr_surface: *zwlr.LayerSurfaceV1, event: zwlr.LayerSurfaceV1.Event, context: *Context) void {
+fn zwlrSurfaceListener(zwlr_surface: *zwlr.LayerSurfaceV1, event: zwlr.LayerSurfaceV1.Event, bar: *Bar) void {
     switch (event) {
         .configure => |configure| {
             zwlr_surface.ackConfigure(configure.serial);
-            context.surface.?.commit();
-            context.height = configure.height;
-            context.width = configure.width;
+            bar.surface.?.commit();
+            bar.height = configure.height;
+            bar.width = configure.width;
             const allocator = std.heap.page_allocator;
-            drawBar(context.*, allocator) catch |err| {
+            drawBar(bar.*, allocator) catch |err| {
                 std.debug.print("Error drawing: {}", .{err});
             };
         },
         .closed => {
-            context.running = false;
+            bar.running = false;
         },
     }
 }
 
-fn drawBar(context: Context, allocator: std.mem.Allocator) !void {
-    const width = context.width;
-    const height = context.height;
+fn drawBar(bar: Bar, allocator: std.mem.Allocator) !void {
+    const width = bar.width;
+    const height = bar.height;
     const stride = width * 4;
     const size = stride * height;
 
@@ -135,28 +135,28 @@ fn drawBar(context: Context, allocator: std.mem.Allocator) !void {
         0,
     ));
     defer std.posix.munmap(@ptrCast(@alignCast(data)));
-    @memset(data, context.config.background_colour);
+    @memset(data, bar.config.background_colour);
 
-    const pool = try context.shm.?.createPool(fd, @intCast(size));
+    const pool = try bar.shm.?.createPool(fd, @intCast(size));
     defer pool.destroy();
 
     const buffer = try pool.createBuffer(0, @intCast(width), @intCast(height), @intCast(stride), wl.Shm.Format.argb8888);
     defer buffer.destroy();
 
-    context.surface.?.attach(buffer, 0, 0);
-    for (context.config.modules) |module| {
+    bar.surface.?.attach(buffer, 0, 0);
+    for (bar.config.modules) |module| {
         switch (module.module_type) {
-            .BlankModule => try draw_blank_module(module, context, data, allocator),
-            .TimeModule => try draw_time_module(module, context, data, allocator),
-            .BatteryModule => try draw_battery_module(module, context, data, allocator),
-            .BrightnessModule => try draw_brightness_module(module, context, data, allocator),
-            .MemoryModule => try draw_memory_module(module, context, data, allocator),
+            .BlankModule => try drawBlankModule(module, bar, data, allocator),
+            .TimeModule => try drawTimeModule(module, bar, data, allocator),
+            .BatteryModule => try drawBatteryModule(module, bar, data, allocator),
+            .BrightnessModule => try drawBrightnessModule(module, bar, data, allocator),
+            .MemoryModule => try drawMemoryModule(module, bar, data, allocator),
         }
     }
-    context.surface.?.commit();
+    bar.surface.?.commit();
 }
 
-fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32, allocator: std.mem.Allocator) !void {
+fn drawText(text: []const u8, x: u32, y: u32, bar: Bar, data: []u32, allocator: std.mem.Allocator) !void {
     var library: c.FT_Library = undefined;
     var face: c.FT_Face = undefined;
     var err: c.FT_Error = undefined;
@@ -171,11 +171,11 @@ fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32, all
         return error.FailedToInitFreeType;
     }
 
-    const temp = try allocator.alloc(u8, context.config.font_file.len + 1);
+    const temp = try allocator.alloc(u8, bar.config.font_file.len + 1);
     defer allocator.free(temp);
     const c_text: [*c]u8 = @ptrCast(temp);
-    @memcpy(c_text[0..context.config.font_file.len], context.config.font_file);
-    c_text[context.config.font_file.len] = 0;
+    @memcpy(c_text[0..bar.config.font_file.len], bar.config.font_file);
+    c_text[bar.config.font_file.len] = 0;
     err = c.FT_New_Face(library, c_text, 0, &face);
     defer _ = c.FT_Done_Face(face);
     if (err == c.FT_Err_Unknown_File_Format) {
@@ -184,7 +184,7 @@ fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32, all
         return error.FailedToCreateFace;
     }
 
-    err = c.FT_Set_Pixel_Sizes(face, 0, context.config.font_size);
+    err = c.FT_Set_Pixel_Sizes(face, 0, bar.config.font_size);
     if (err != 0) {
         return error.FailedToSetPixelSize;
     }
@@ -206,14 +206,14 @@ fn drawText(text: []const u8, x: u32, y: u32, context: Context, data: []u32, all
         const slot: c.FT_GlyphSlot = face.*.glyph;
         var bitmap_top: i32 = @as(i32, @intCast(pen_y)) - @as(i32, @intCast(slot.*.metrics.horiBearingY >> 6));
         bitmap_top += 20;
-        try draw_character(context, data, &slot.*.bitmap, pen_x, @intCast(bitmap_top));
+        try drawCharacter(bar, data, &slot.*.bitmap, pen_x, @intCast(bitmap_top));
 
         pen_x += @intCast(slot.*.advance.x >> 6);
         pen_y += @intCast(slot.*.advance.y >> 6);
     }
 }
 
-fn draw_character(context: Context, data: []u32, bitmap: *c.FT_Bitmap, pen_x: u32, pen_y: u32) !void {
+fn drawCharacter(bar: Bar, data: []u32, bitmap: *c.FT_Bitmap, pen_x: u32, pen_y: u32) !void {
     const x_max: u32 = pen_x + bitmap.*.width;
     const y_max: u32 = pen_y + bitmap.*.rows;
     var i: u32 = pen_x;
@@ -222,7 +222,7 @@ fn draw_character(context: Context, data: []u32, bitmap: *c.FT_Bitmap, pen_x: u3
         i += 1;
         p += 1;
     }) {
-        if (i < 0 or i >= context.width) {
+        if (i < 0 or i >= bar.width) {
             continue;
         }
         var j: u32 = pen_y;
@@ -231,12 +231,12 @@ fn draw_character(context: Context, data: []u32, bitmap: *c.FT_Bitmap, pen_x: u3
             j += 1;
             q += 1;
         }) {
-            if (j < 0 or j >= context.height) {
+            if (j < 0 or j >= bar.height) {
                 continue;
             }
 
             if (monoPixelIsSet(bitmap, p, q)) {
-                data[i + j * context.width] = 0xFFFFFFFF;
+                data[i + j * bar.width] = 0xFFFFFFFF;
             }
         }
     }
@@ -253,23 +253,23 @@ fn monoPixelIsSet(bitmap: *c.FT_Bitmap, x: usize, y: usize) bool {
     return (byte & bit_mask) != 0;
 }
 
-fn draw_brightness_module(module: cfg.Module, context: Context, data: []u32, allocator: std.mem.Allocator) anyerror!void {
+fn drawBrightnessModule(module: cfg.Module, bar: Bar, data: []u32, allocator: std.mem.Allocator) anyerror!void {
     var j: u32 = module.y;
     while (j < module.y + module.height) : (j += 1) {
         var i: u32 = module.x;
         while (i < module.x + module.width) : (i += 1) {
-            data[j * context.width + i] = module.background_colour;
+            data[j * bar.width + i] = module.background_colour;
         }
     }
 
-    const brightness = try get_brightness(allocator);
+    const brightness = try getBrightness(allocator);
     const brightness_str = try std.fmt.allocPrint(allocator, "{}", .{brightness});
 
-    try drawText(brightness_str, module.x, module.y, context, data, allocator);
-    context.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
+    try drawText(brightness_str, module.x, module.y, bar, data, allocator);
+    bar.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
 }
 
-pub fn get_brightness(allocator: std.mem.Allocator) !u16 {
+pub fn getBrightness(allocator: std.mem.Allocator) !u16 {
     const max_brightness_file = try std.fs.cwd().openFile("/sys/class/backlight/intel_backlight/max_brightness", .{});
     defer max_brightness_file.close();
     const max_brightness_buf = try max_brightness_file.readToEndAlloc(allocator, 4);
@@ -287,25 +287,25 @@ pub fn get_brightness(allocator: std.mem.Allocator) !u16 {
     return rel_brightness;
 }
 
-fn draw_battery_module(module: cfg.Module, context: Context, data: []u32, allocator: std.mem.Allocator) anyerror!void {
+fn drawBatteryModule(module: cfg.Module, bar: Bar, data: []u32, allocator: std.mem.Allocator) anyerror!void {
     var j: u32 = module.y;
     while (j < module.y + module.height) : (j += 1) {
         var i: u32 = module.x;
         while (i < module.x + module.width) : (i += 1) {
-            data[j * context.width + i] = module.background_colour;
+            data[j * bar.width + i] = module.background_colour;
         }
     }
 
-    const battery_charge = try get_battery_charge(allocator);
-    const battery_status = try get_battery_status(allocator);
+    const battery_charge = try getBatteryCharge(allocator);
+    const battery_status = try getBatteryStatus(allocator);
     const battery_str = try std.fmt.allocPrint(allocator, "{}: {s}", .{ battery_charge, battery_status });
     defer allocator.free(battery_str);
 
-    try drawText(battery_str, module.x, module.y, context, data, allocator);
-    context.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
+    try drawText(battery_str, module.x, module.y, bar, data, allocator);
+    bar.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
 }
 
-pub fn get_battery_charge(allocator: std.mem.Allocator) !u8 {
+pub fn getBatteryCharge(allocator: std.mem.Allocator) !u8 {
     const file = try std.fs.cwd().openFile("/sys/class/power_supply/BAT0/capacity", .{});
     defer file.close();
 
@@ -315,30 +315,30 @@ pub fn get_battery_charge(allocator: std.mem.Allocator) !u8 {
     return charge;
 }
 
-pub fn get_battery_status(allocator: std.mem.Allocator) ![]u8 {
+pub fn getBatteryStatus(allocator: std.mem.Allocator) ![]u8 {
     const file = try std.fs.cwd().openFile("/sys/class/power_supply/BAT0/status", .{});
     defer file.close();
     const battery_status = try file.readToEndAlloc(allocator, 20);
     return battery_status[0 .. battery_status.len - 1];
 }
 
-fn draw_memory_module(module: cfg.Module, context: Context, data: []u32, allocator: std.mem.Allocator) anyerror!void {
+fn drawMemoryModule(module: cfg.Module, bar: Bar, data: []u32, allocator: std.mem.Allocator) anyerror!void {
     var j: u32 = module.y;
     while (j < module.y + module.height) : (j += 1) {
         var i: u32 = module.x;
         while (i < module.x + module.width) : (i += 1) {
-            data[j * context.width + i] = module.background_colour;
+            data[j * bar.width + i] = module.background_colour;
         }
     }
 
-    const memory = try get_memory_usage();
+    const memory = try getMemoryUsage();
     const mem_str = try std.fmt.allocPrint(allocator, "{}", .{memory});
 
-    try drawText(mem_str, module.x, module.y, context, data, allocator);
-    context.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
+    try drawText(mem_str, module.x, module.y, bar, data, allocator);
+    bar.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
 }
 
-pub fn get_memory_usage() !usize {
+pub fn getMemoryUsage() !usize {
     var file = try std.fs.openFileAbsolute("/proc/meminfo", .{});
     defer file.close();
 
@@ -356,15 +356,15 @@ pub fn get_memory_usage() !usize {
     var lines = std.mem.splitAny(u8, content, "\n");
     while (lines.next()) |line| {
         if (std.mem.startsWith(u8, line, "MemTotal:")) {
-            total = try parse_kb_value(line);
+            total = try parseKbValue(line);
         } else if (std.mem.startsWith(u8, line, "MemFree:")) {
-            free = try parse_kb_value(line);
+            free = try parseKbValue(line);
         } else if (std.mem.startsWith(u8, line, "Buffers:")) {
-            buffers = try parse_kb_value(line);
+            buffers = try parseKbValue(line);
         } else if (std.mem.startsWith(u8, line, "Cached:")) {
-            cached = try parse_kb_value(line);
+            cached = try parseKbValue(line);
         } else if (std.mem.startsWith(u8, line, "MemAvailable:")) {
-            available = try parse_kb_value(line);
+            available = try parseKbValue(line);
         }
     }
 
@@ -373,7 +373,7 @@ pub fn get_memory_usage() !usize {
     return used / 1000;
 }
 
-fn parse_kb_value(line: []const u8) !usize {
+fn parseKbValue(line: []const u8) !usize {
     var parts = std.mem.tokenizeScalar(u8, line, ' ');
     _ = parts.next(); // skip key
 
@@ -381,23 +381,23 @@ fn parse_kb_value(line: []const u8) !usize {
     return std.fmt.parseInt(usize, value_str, 10);
 }
 
-fn draw_blank_module(module: cfg.Module, context: Context, data: []u32, allocator: std.mem.Allocator) anyerror!void {
+fn drawBlankModule(module: cfg.Module, bar: Bar, data: []u32, allocator: std.mem.Allocator) anyerror!void {
     _ = allocator;
     var j: u32 = module.y;
     while (j < module.y + module.height) : (j += 1) {
         var i: u32 = module.x;
         while (i < module.x + module.width) : (i += 1) {
-            data[j * context.width + i] = module.background_colour;
+            data[j * bar.width + i] = module.background_colour;
         }
     }
 }
 
-fn draw_time_module(module: cfg.Module, context: Context, data: []u32, allocator: std.mem.Allocator) anyerror!void {
+fn drawTimeModule(module: cfg.Module, bar: Bar, data: []u32, allocator: std.mem.Allocator) anyerror!void {
     var j: u32 = module.y;
     while (j < module.y + module.height) : (j += 1) {
         var i: u32 = module.x;
         while (i < module.x + module.width) : (i += 1) {
-            data[j * context.width + i] = module.background_colour;
+            data[j * bar.width + i] = module.background_colour;
         }
     }
     const time = c.time(null);
@@ -409,6 +409,6 @@ fn draw_time_module(module: cfg.Module, context: Context, data: []u32, allocator
     }
     const time_str: []const u8 = c_time_str[0 .. len - 1];
 
-    try drawText(time_str, module.x, module.y, context, data, allocator);
-    context.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
+    try drawText(time_str, module.x, module.y, bar, data, allocator);
+    bar.surface.?.damage(@intCast(module.x), @intCast(module.y), @intCast(module.width), @intCast(module.height));
 }
