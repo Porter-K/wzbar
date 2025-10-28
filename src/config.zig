@@ -4,6 +4,9 @@ const toml = @import("toml");
 pub const ModuleType = enum {
     BlankModule,
     TimeModule,
+    MemoryModule,
+    BatteryModule,
+    BrightnessModule,
 };
 
 pub const Module = struct {
